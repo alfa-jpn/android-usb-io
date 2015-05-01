@@ -1,0 +1,1 @@
+include ':androidusbiomodule', ':example-app'
