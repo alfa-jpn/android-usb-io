@@ -1,6 +1,7 @@
 package jp.jidosya.androidusbio;
 
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -8,14 +9,14 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
-import android.util.Log;
 
 import java.util.Arrays;
 
-/**
- * Created by develop on 15/05/02.
- */
-public class USBIO implements IUSBEventListener {
+import jp.jidosya.androidusbio.usbios.IUSBIOEventListener;
+import jp.jidosya.androidusbio.usbios.PortStatus;
+import jp.jidosya.androidusbio.usbios.USBIOException;
+
+public class USBIO implements AutoCloseable {
     public static final String ACTION_USB_PERMISSION = "jp.jidosya.androidusbio.USB_PERMISSION";
     public final static int    USB_IO_VENDOR_ID      = 0x1352;
     public final static int    USB_IO_PRODUCT_IDS[]  = {0x0110, 0x0111, 0x0120, 0x0121};
@@ -24,65 +25,55 @@ public class USBIO implements IUSBEventListener {
     public final static byte   USB_IO_PORT2          = 0x02;
     public final static byte   USB_IO_ORDER          = 0x20;
 
-    private boolean _isAttached;
+    private boolean isAttached;
 
-    private IUSBIOEventListener _listener;
+    private IUSBIOEventListener listener;
 
     // Running Context;
-    private Context _context;
+    private Context context;
 
     // USB-IO Connection.
-    private UsbDeviceConnection _usbIOConnection;
+    private UsbDeviceConnection usbIOConnection;
 
     // Interface of USB-IO.
-    private UsbInterface _usbIOInterface;
+    private UsbInterface usbIOInterface;
 
     // USBManager
-    private UsbManager _usbManager;
+    private UsbManager usbManager;
 
-    public boolean isAttached() { return _isAttached; }
+    public boolean isAttached() { return isAttached; }
 
     // InitializeClass
     // @param [Context] context The context of Running.
     public USBIO(Context context) {
-        _context = context;
-        initialize();
+        this(context, null);
     }
 
     // InitializeClass
+    // @throw [USBIOException] if Not found USBIO.
+    //
     // @param [Context]             context  The context of Running.
     // @param [IUSBIOEventListener] listener Event Listener.
-    public USBIO(Context context, IUSBIOEventListener listener) {
-        _listener = listener;
-        _context = context;
-        initialize();
-    }
+    public USBIO(Context context, IUSBIOEventListener listener) throws USBIOException {
+        this.context  = context;
+        this.listener = listener;
 
-    private void initialize() {
-        _isAttached = false;
-        _usbManager = (UsbManager)_context.getSystemService(Context.USB_SERVICE);
+        this.isAttached = false;
+        this.usbManager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
 
-        UsbDevice device = FindUSBIO();
-        if(device != null) {
-            requestUSBDevicePermission(device);
-        } else {
-            Log.e("USB-IO", "Not Found USB-IO");
-        }
+        requestUSBDevicePermission(findUSBIO());
     }
 
     public void close() {
         detachUSBIO();
     }
 
-    public boolean send(byte port, PortStatus ps) {
-        byte bt[] = new byte[USB_IO_DATA_SIZE];
-        bt[0] = USB_IO_ORDER;
-        bt[1] = port;
-        bt[2] = ps.getPort();
-
-        int sendSize = _usbIOConnection.bulkTransfer(_usbIOInterface.getEndpoint(1), bt, USB_IO_DATA_SIZE, 1000);
-
-        return sendSize == USB_IO_DATA_SIZE;
+    public void send(byte port, PortStatus ps) throws USBIOException {
+        byte data[] = new byte[USB_IO_DATA_SIZE];
+        data[0] = USB_IO_ORDER;
+        data[1] = port;
+        data[2] = ps.getPort();
+        send(data);
     }
 
     public PortStatus receive(byte port) {
@@ -90,36 +81,21 @@ public class USBIO implements IUSBEventListener {
     }
 
     public PortStatus receive(byte port, boolean withInitialize) {
-        byte bt[] = new byte[USB_IO_DATA_SIZE];
-        bt[0] = USB_IO_ORDER;
-        bt[1] = port;
-        bt[2] = (byte)0xFF;
+        byte data[] = new byte[USB_IO_DATA_SIZE];
+        data[0] = USB_IO_ORDER;
+        data[1] = port;
+        data[2] = (byte)0xFF;
 
         if (withInitialize) {
-            int sendSize = _usbIOConnection.bulkTransfer(_usbIOInterface.getEndpoint(1), bt, USB_IO_DATA_SIZE, 1000);
-            if(sendSize != USB_IO_DATA_SIZE) {
-                return null;
-            }
+            send(data);
         }
+        receive(data);
 
-        int receiveSize = _usbIOConnection.bulkTransfer(_usbIOInterface.getEndpoint(0), bt, USB_IO_DATA_SIZE, 1000);
-        if (receiveSize != USB_IO_DATA_SIZE) {
-            return null;
-        }
-
-        return new PortStatus(bt[port]);
+        return new PortStatus(data[port]);
     }
 
-    public void onUSBPermitted(UsbDevice device) {
-        attachUSBIO(device);
-    }
-
-    public void onUSBDisconnected(UsbDevice device) {
-        detachUSBIO();
-    }
-
-    private UsbDevice FindUSBIO() {
-        for(UsbDevice device : _usbManager.getDeviceList().values()) {
+    private UsbDevice findUSBIO() throws USBIOException {
+        for(UsbDevice device : usbManager.getDeviceList().values()) {
             if(device.getVendorId() != USB_IO_VENDOR_ID) {
                 continue;
             }
@@ -128,49 +104,74 @@ public class USBIO implements IUSBEventListener {
             }
             return device;
         }
-        return null;
+        throw new USBIOException("Not Found USB-IO.");
     }
 
-    private void requestUSBDevicePermission(UsbDevice device) {
+    private void requestUSBDevicePermission(final UsbDevice device) {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ACTION_USB_PERMISSION);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-        _context.registerReceiver(new USBBroadcastReceiver(ACTION_USB_PERMISSION, device, this), filter);
 
-        PendingIntent intent = PendingIntent.getBroadcast(_context, 0, new Intent(ACTION_USB_PERMISSION), 0);
-        _usbManager.requestPermission(device, intent);
+        context.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (ACTION_USB_PERMISSION.equals(action)) {
+                    attachUSBIO(device);
+                } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+                    detachUSBIO();
+                }
+            }
+        }, filter);
+
+        PendingIntent intent = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_USB_PERMISSION), 0);
+        usbManager.requestPermission(device, intent);
     }
 
     private void attachUSBIO(UsbDevice device) {
-        _usbIOConnection = _usbManager.openDevice(device);
-        if(_usbIOConnection != null) {
-            _usbIOInterface = device.getInterface(0);
-            _usbIOConnection.claimInterface(_usbIOInterface, true);
-            _isAttached = true;
+        usbIOConnection = usbManager.openDevice(device);
+        if(usbIOConnection != null) {
+            usbIOInterface = device.getInterface(0);
+            usbIOConnection.claimInterface(usbIOInterface, true);
+            isAttached = true;
 
-            if(_listener != null) {
-                _listener.onUSBIOAttached(this);
+            if(listener != null) {
+                listener.onAttached(this);
             }
-            Log.d("USB-IO", "Attache USB-IO: " + device.getProductId());
         } else {
-            Log.e("USB-IO", "Can not attache USB-IO: " + device.getProductId());
+            if(listener != null) {
+                listener.onError(this);
+            }
         }
     }
 
     private void detachUSBIO() {
-        _isAttached = false;
-        if (_usbIOConnection != null) {
-            if(_usbIOInterface != null) {
-                _usbIOConnection.releaseInterface(_usbIOInterface);
-                _usbIOInterface = null;
+        isAttached = false;
+        if (usbIOConnection != null) {
+            if(usbIOInterface != null) {
+                usbIOConnection.releaseInterface(usbIOInterface);
+                usbIOInterface = null;
             }
-            _usbIOConnection.close();
-            _usbIOConnection = null;
-
-            if(_listener != null) {
-                _listener.onUSBIODetached(this);
-            }
+            usbIOConnection.close();
+            usbIOConnection = null;
         }
-        Log.d("USB-IO", "Detach USB-IO");
+
+        if(listener != null) {
+            listener.onDetached(this);
+        }
+    }
+
+    private void receive(byte[] data) throws USBIOException {
+        int size = usbIOConnection.bulkTransfer(usbIOInterface.getEndpoint(0), data, USB_IO_DATA_SIZE, 1000);
+        if (size != USB_IO_DATA_SIZE) {
+            throw new USBIOException(String.format("Invalid receive data size. expect %d, but %d", USB_IO_DATA_SIZE, size));
+        }
+    }
+
+    private void send(byte[] data) throws USBIOException {
+        int size = usbIOConnection.bulkTransfer(usbIOInterface.getEndpoint(1), data, USB_IO_DATA_SIZE, 1000);
+        if (size != USB_IO_DATA_SIZE) {
+            throw new USBIOException(String.format("Invalid sent data size. expect %d, but %d", USB_IO_DATA_SIZE, size));
+        }
     }
 }
