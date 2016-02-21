@@ -1,21 +1,24 @@
-package jp.jidosya.androidusbio;
+package jp.jidosya.androidusbio.usbio_services;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 
+import jp.jidosya.androidusbio.USBIOService;
+import jp.jidosya.androidusbio.usbios.PortStatus;
+
 public class PortStatusBroadcastReceiver extends BroadcastReceiver {
-    private IPortStatusEventListener _listener;
+    private IPortStatusEventListener listener;
 
     // Initialize Receiver.
     // @param [IPortStatusEventListener] listener EventListener.
     public PortStatusBroadcastReceiver(IPortStatusEventListener listener) {
-        _listener = listener;
+        this.listener = listener;
     }
 
     public void onReceive(Context context, Intent intent) {
         if(USBIOService.ACTION_STATUS_CHANGED.equals(intent.getAction())) {
-            _listener.onUSBIOPortStatusChanged(new PortStatus(intent.getByteExtra("PortStatus", (byte)0xFF)));
+            listener.onPortStatusChanged(new PortStatus(intent.getByteExtra(USBIOService.PORT_BYTES_DATA, (byte) 0xFF)));
         }
     }
 }

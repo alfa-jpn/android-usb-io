@@ -1,32 +1,32 @@
-package jp.jidosya.androidusbio;
+package jp.jidosya.androidusbio.usbios;
 
 public class PortStatus {
-    private byte _port = 0x00;
+    private byte port = 0x00;
 
     public PortStatus(byte port) {
-        _port = port;
+        this.port = port;
     }
 
     public boolean get(int pin) {
-        return ((_port & 0x01 << pin) == 0);
+        return ((port & 0x01 << pin) == 0);
     }
 
     public void set(int pin, boolean value) {
         byte b = (byte)(0x01 << pin);
         if (value) {
-            _port = (byte)(_port & ~b);
+            port = (byte)(port & ~b);
         } else {
-            _port = (byte)(_port | b);
+            port = (byte)(port | b);
         }
     }
 
     public byte getPort() {
-        return _port;
+        return port;
     }
 
     public boolean equals(Object o) {
         if(o != null && o instanceof PortStatus) {
-            return((PortStatus) o)._port == _port;
+            return((PortStatus) o).port == port;
         }
         return false;
     }
